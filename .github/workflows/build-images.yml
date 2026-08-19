@@ -1,0 +1,94 @@
+name: Sync and Build Docker Image
+
+on:
+  schedule:
+    - cron: '0 0 * * *' # Cek update dari upstream setiap jam 12 malam
+  workflow_dispatch: # Bisa di-trigger manual dari tab Actions
+  push:
+    branches:
+      - main
+
+env:
+  # Nama image di Docker Hub
+  IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/headscale-ui:latest
+
+jobs:
+  sync:
+    name: Sync with Upstream
+    runs-on: ubuntu-latest
+    outputs:
+      updated: ${{ steps.sync_step.outputs.updated }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Git Configuration
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+
+      - name: Pull upstream changes
+        id: sync_step
+        run: |
+          git remote add upstream https://github.com/MunMunMiao/headscale-ui.git
+          git fetch upstream
+          
+          OLD_HEAD=$(git rev-parse HEAD)
+          git merge upstream/main || echo "Merge conflict or already up to date"
+          NEW_HEAD=$(git rev-parse HEAD)
+          
+          if [ "$OLD_HEAD" != "$NEW_HEAD" ]; then
+            echo "New updates found."
+            echo "updated=true" >> $GITHUB_OUTPUT
+          else
+            echo "No new updates."
+            echo "updated=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Push changes to fork
+        uses: ad-m/github-push-action@master
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          branch: main
+
+  build:
+    needs: sync
+    # Hanya build jika ada update, atau dijalankan manual, atau ada push
+    if: needs.sync.outputs.updated == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64, linux/arm64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
