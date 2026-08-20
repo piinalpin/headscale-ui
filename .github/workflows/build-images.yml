@@ -10,7 +10,7 @@ on:
 
 env:
   # Nama image di Docker Hub
-  IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/headscale-ui:latest
+  IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/headscale-ui
 
 jobs:
   sync:
